@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Càlcul de Sessions Restants</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            justify-content: space-between;
+            max-width: 1200px;
+            margin: auto;
+        }
+        .configuracio {
+            width: 30%;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+            position: relative;
+        }
+        /* Botó de calcular sessions, a dalt a la DRETA, quadrat i color vermell */
+        .calc-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: red;
+            color: #fff;
+            width: 60px;
+            height: 60px;
+            border: none;
+            cursor: pointer;
+            text-align: center;
+            font-weight: bold;
+            line-height: 60px;
+            box-sizing: border-box;
+            border-radius: 0;
+            z-index: 9999;
+        }
+        .calc-button:hover {
+            background-color: #cc0000;
+        }
+
+        .resultats {
+            width: 65%;
+        }
+        .taula-grup {
+            background: white;
+            margin: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0px 0px 5px rgba(0, 0, 0, 0.1);
+        }
+        h2, h3 {
+            color: #333;
+            text-align: center;
+            margin-top: 0;
+        }
+        label {
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        input, button {
+            display: block;
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+        /* Botons per defecte (eliminar, etc.) en blau per distingir-los del vermell del de càlcul */
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+    </style>
+    <script>
+        // =============== ESTRUCTURA DE DADES =============== //
+        // Guardem els festius com a array d'objectes { raw: string, dateVal: number|null } per poder-los ordenar.
+        // Grups: array d'objectes { nom: string, dies: string }
+        // Ultim dia de curs: string (yyyy-mm-dd) emmagatzemat a localStorage
+
+        function migrarFestius(festiusArr) {
+            // Si és array de strings, convertim-ho a array d'objectes.
+            // Si ja té format objecte {raw, dateVal}, ho deixem estar.
+            let resultat = [];
+            festiusArr.forEach(el => {
+                if (typeof el === 'string') {
+                    // Convertir a objecte
+                    resultat.push(creaObjecteFestiu(el));
+                } else if (typeof el === 'object' && el.raw !== undefined) {
+                    // ja és objecte antic
+                    resultat.push({ raw: el.raw, dateVal: el.dateVal || null });
+                } else {
+                    // valor desconegut
+                    // tractem-lo com string
+                    resultat.push(creaObjecteFestiu(String(el)));
+                }
+            });
+            return resultat;
+        }
+
+        function creaObjecteFestiu(rawStr) {
+            let d = new Date(rawStr);
+            if (isNaN(d)) {
+                return { raw: rawStr, dateVal: null };
+            } else {
+                return { raw: rawStr, dateVal: d.getTime() };
+            }
+        }
+
+        function ordenarFestius(festiusArr) {
+            // Primer, els que tinguin dateVal vàlid (no null), ordenats creixentment.
+            // Després, els que tinguin dateVal null (en l'ordre en què van ser afegits).
+            let valids = festiusArr.filter(f => f.dateVal !== null);
+            let invalids = festiusArr.filter(f => f.dateVal === null);
+            valids.sort((a,b) => a.dateVal - b.dateVal);
+            return [...valids, ...invalids];
+        }
+
+        // =============== LLEGIR/ESCRIURE LOCALSTORAGE =============== //
+        let festius = JSON.parse(localStorage.getItem("festius")) || [];
+        // fem migració i guardem
+        festius = migrarFestius(festius);
+        festius = ordenarFestius(festius);
+        localStorage.setItem("festius", JSON.stringify(festius));
+
+        let grups = JSON.parse(localStorage.getItem("grups")) || [];
+        let ultimDiaGuardat = localStorage.getItem("ultimDia") || "";
+
+        // =============== GESTIÓ DE GRUPS =============== //
+        // Crem aquí la funció per afegir un grup amb checkboxes Dilluns-Divendres
+        function afegirGrup() {
+            let nom = document.getElementById("nomGrup").value.trim();
+            // Llegim tots els checkboxes marcats
+            let checkboxes = document.querySelectorAll("input[name='diaSetmana']:checked");
+            let diesArray = [];
+
+            checkboxes.forEach(c => {
+                diesArray.push(c.value.toLowerCase());
+            });
+
+            // Si no hi ha nom o no s'ha marcat cap dia, no fem res
+            if (!nom || diesArray.length === 0) {
+                return;
+            }
+
+            let dies = diesArray.join(",");
+            // Afegim el grup
+            grups.push({ nom, dies });
+            localStorage.setItem("grups", JSON.stringify(grups));
+            mostrarGrups();
+
+            // netegem
+            document.getElementById("nomGrup").value = "";
+            document.querySelectorAll("input[name='diaSetmana']").forEach(c => c.checked = false);
+        }
+
+        function mostrarGrups() {
+            let taula = document.getElementById("taulaGrups");
+            taula.innerHTML = "";
+            grups.forEach((grup, index) => {
+                let fila = taula.insertRow();
+                fila.insertCell().innerText = grup.nom;
+                fila.insertCell().innerText = grup.dies;
+                let btnEliminar = document.createElement("button");
+                btnEliminar.innerText = "Eliminar";
+                btnEliminar.onclick = function() {
+                    eliminarGrup(index);
+                };
+                fila.insertCell().appendChild(btnEliminar);
+            });
+        }
+
+        function eliminarGrup(index) {
+            grups.splice(index, 1);
+            localStorage.setItem("grups", JSON.stringify(grups));
+            mostrarGrups();
+        }
+
+        // =============== GESTIÓ DE FESTIUS =============== //
+        function afegirFestius() {
+            let festiuDate = document.getElementById("nouFestius").value.trim();
+            let festiuText = document.getElementById("textFestius").value.trim();
+
+            // Si l'usuari ha posat una data al selector 'date'
+            if (festiuDate) {
+                // Creem un sol festiu
+                let obj = creaObjecteFestiu(festiuDate);
+                festius.push(obj);
+            } else if (festiuText) {
+                // Separem per comes
+                let llistaDates = festiuText.split(",");
+                llistaDates.forEach(entrada => {
+                    let valor = entrada.trim();
+                    if (valor) {
+                        let obj = creaObjecteFestiu(valor);
+                        festius.push(obj);
+                    }
+                });
+            } else {
+                // Si no s'ha introduït res, no fem res
+                return;
+            }
+
+            // Ordenem i guardem
+            festius = ordenarFestius(festius);
+            localStorage.setItem("festius", JSON.stringify(festius));
+            mostrarFestius();
+
+            // Buidem els camps
+            document.getElementById("nouFestius").value = "";
+            document.getElementById("textFestius").value = "";
+        }
+
+        function mostrarFestius() {
+            let taula = document.getElementById("taulaFestius");
+            taula.innerHTML = "";
+            // assumim que l'array festius ja està ordenat
+            festius.forEach((f, index) => {
+                let fila = taula.insertRow();
+                fila.insertCell().innerText = f.raw;
+                let btnEliminar = document.createElement("button");
+                btnEliminar.innerText = "Eliminar";
+                btnEliminar.onclick = function() {
+                    eliminarFestiu(index);
+                };
+                fila.insertCell().appendChild(btnEliminar);
+            });
+        }
+
+        function eliminarFestiu(index) {
+            festius.splice(index, 1);
+            festius = ordenarFestius(festius);
+            localStorage.setItem("festius", JSON.stringify(festius));
+            mostrarFestius();
+        }
+
+        // =============== FINAL DE CURS =============== //
+        function guardarUltimDia() {
+            ultimDiaGuardat = document.getElementById("ultimDia").value;
+            localStorage.setItem("ultimDia", ultimDiaGuardat);
+        }
+
+        // =============== CÀLCUL DE SESSIONS =============== //
+        function calcularSessions() {
+            // refresquem la variable per si s'ha canviat
+            ultimDiaGuardat = localStorage.getItem("ultimDia") || "";
+
+            if (!ultimDiaGuardat) {
+                alert("Si us plau, guarda primer l'últim dia de curs.");
+                return;
+            }
+            const ultimDia = new Date(ultimDiaGuardat);
+
+            // Convertim tots els festius a Date
+            const festiusDates = festius
+                .map(f => {
+                    if (f.dateVal === null) {
+                        return null;
+                    } else {
+                        return new Date(f.dateVal);
+                    }
+                })
+                .filter(d => d !== null);
+
+            let resultatsContainer = document.getElementById("resultatsContainer");
+            resultatsContainer.innerHTML = "";
+
+            grups.forEach(grup => {
+                let taula = document.createElement("table");
+                taula.classList.add("taula-grup");
+                let header = taula.createTHead().insertRow();
+                header.insertCell().innerText = "Sessió";
+                header.insertCell().innerText = "Data";
+                header.insertCell().innerText = "Dia de la setmana";
+
+                let avui = new Date();
+                let sessions = 0;
+                let diesClasse = grup.dies.split(",").map(d => d.trim().toLowerCase());
+
+                while (avui <= ultimDia) {
+                    let diaSetmana = avui.toLocaleDateString("ca-ES", { weekday: 'long' }).toLowerCase();
+                    let esFestius = festiusDates.some(f => f.toDateString() === avui.toDateString());
+
+                    if (diesClasse.includes(diaSetmana) && !esFestius) {
+                        sessions++;
+                        let fila = taula.insertRow();
+                        fila.insertCell().innerText = sessions;
+                        fila.insertCell().innerText = avui.toLocaleDateString("ca-ES");
+                        fila.insertCell().innerText = diaSetmana;
+                    }
+                    avui.setDate(avui.getDate() + 1);
+                }
+                let title = document.createElement("h3");
+                // Mostrem el nombre total de sessions al costat del nom
+                title.innerText = grup.nom + ' (' + sessions + ')';
+                resultatsContainer.appendChild(title);
+                resultatsContainer.appendChild(taula);
+            });
+        }
+
+        // =============== ONLOAD =============== //
+        window.onload = function() {
+            // Recuperem l'últim dia de curs directament de localStorage
+            ultimDiaGuardat = localStorage.getItem("ultimDia") || "";
+            document.getElementById("ultimDia").value = ultimDiaGuardat;
+
+            mostrarGrups();
+            mostrarFestius();
+        };
+    </script>
+</head>
+<body>
+    <h2>Càlcul de Sessions Restants</h2>
+
+    <div class="container">
+        <div class="configuracio">
+            <!-- Botó calcular sessions a dalt a la DRETA, quadrat i vermell -->
+            <button class="calc-button" onclick="calcularSessions()">CALC</button>
+
+            <h3>Grups guardats</h3>
+            <table id="taulaGrups"></table>
+
+            <h3>Afegir nou grup</h3>
+            <label for="nomGrup">Nom del grup:</label>
+            <input type="text" id="nomGrup" placeholder="Nom del grup">
+
+            <!-- Dies de la setmana per checkboxes (dilluns a divendres) -->
+            <label><strong>Dies de classe:</strong></label>
+            <div id="checkboxesDiesSetmana" style="display: flex; flex-wrap: wrap; gap: 5px;">
+                <label><input type="checkbox" name="diaSetmana" value="dilluns">Dilluns</label>
+                <label><input type="checkbox" name="diaSetmana" value="dimarts">Dimarts</label>
+                <label><input type="checkbox" name="diaSetmana" value="dimecres">Dimecres</label>
+                <label><input type="checkbox" name="diaSetmana" value="dijous">Dijous</label>
+                <label><input type="checkbox" name="diaSetmana" value="divendres">Divendres</label>
+            </div>
+
+            <button onclick="afegirGrup()">Afegir Grup</button>
+
+            <h3>Dies Festius</h3>
+            <input type="date" id="nouFestius">
+            <input type="text" id="textFestius" placeholder="Escriure data manualment">
+            <button onclick="afegirFestius()">Afegir</button>
+            <table id="taulaFestius"></table>
+
+            <h3>Final de curs</h3>
+            <label for="ultimDia">Últim dia de curs:</label>
+            <input type="date" id="ultimDia">
+            <button onclick="guardarUltimDia()">Guardar Últim Dia</button>
+        </div>
+
+        <div class="resultats" id="resultatsContainer">
+            <h3>Resultats</h3>
+            <!-- Aquí es generaran les taules dels grups -->
+        </div>
+    </div>
+
+    <hr>
+    <!-- Botó per esborrar totes les dades i disclaimer -->
+    <button onclick="esborrarTot()" style="background-color:#dc3545;">Esborrar TOT</button>
+    <p style="text-align: center; font-size: 0.9em; color: #555; margin-top: 10px;">
+        Fet amb IA. L'usuari és responsable de les dades i de l'ús que en faci.
+    </p>
+
+    <script>
+    function esborrarTot() {
+        if (confirm("Segur que vols esborrar totes les dades?")) {
+            localStorage.clear();
+            alert("S'han esborrat totes les dades.");
+            window.location.reload();
+        }
+    }
+    </script>
+
+</body>
+</html>
